@@ -1,0 +1,4 @@
+id,host_id,latitude,longitude,accommodates,bathrooms,bedrooms,beds,minimum_nights,availability_365,number_of_reviews,neighbourhood_cleansed,property_type,room_type,host_response_rate,host_listings_count,amenities,bathrooms_text
+1000000000000000000,host-0,34.07270639651928,-118.28413830295517,7,2.0,2.0,3,30,26,160,Hills,Apartment,Private room,100%,6,"[""Wifi"", ""Kitchen""]",2 shared baths
+1000000000000000001,host-0,34.15304621723547,-118.2465303930332,2,3.0,4.0,1,30,220,172,Coastal,Apartment,Private room,95%,4,"[""Pool"", ""Wifi"", ""Parking""]",2 shared baths
+1000000000000000002,host-1,34.00555327537068,-118.09617944370699,1,1.0,4.0,2,1,343,116,Central,House,Entire home/apt,100%,6,"[""Pool"", ""Wifi"", ""Parking""]",2 shared baths
