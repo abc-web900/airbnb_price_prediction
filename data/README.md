@@ -1,15 +1,3 @@
-# Airbnb listing price prediction: results and findings
-
-The final **V2 blend of CatBoost and LightGBM** achieved **MAE 102.93067**,
-**RMSE 400.27770**, and **R² 0.57826** on **7,421 labeled holdout listings**.
-It reduced MAE by **1.51%** compared with the earlier equal-weight ensemble.
-Errors remained much larger for expensive listings, which the model tended
-to underpredict.
-
-These findings are taken from the saved outputs in
-[airbnb.ipynb](../airbnb.ipynb). They describe two completed notebook experiments,
-not a new run of the modular package. All price errors are in the dataset's
-original price units. This is a regression task; R² is not classification accuracy.
 
 ## Dataset and evaluation design
 
