@@ -1,255 +1,272 @@
-# airbnb
 
-**Airbnb listing price prediction**
+## Dataset and evaluation design
 
-Predicts listing prices from location, capacity, room type, property type, and review/availability attributes. The supplied notebook includes Los Angeles-area listing examples. This package adapts its second, MAE-focused workflow with native categorical boosting and validation-selected blending.
+| Data stage | Rows | Finding |
+| --- | ---: | --- |
+| Original dataset | 45,533 | 25 input columns before feature processing |
+| Exact duplicates removed | 0 | No exact duplicate rows were removed |
+| Invalid or nonpositive prices excluded | 8,237 | Missing, invalid, or nonpositive targets were unsuitable for supervised training |
+| Valid labeled listings | 37,296 | Valid expensive listings were retained |
+| Development set | 29,875 | Model development and final component fitting |
+| Labeled holdout | 7,421 | Same holdout used for the original and V2 comparisons |
+| V2 CV/training subset within development | 24,306 | Three-fold candidate comparison |
+| V2 blend-validation subset within development | 5,569 | Choose blend weights before final refitting |
 
-## Recorded notebook findings
+Splits and cross-validation grouped listings by `host_id`, preventing the same
+known host from appearing in both sides of a split. The split fractions applied
+to hosts, so row counts were not exact percentages. Listing IDs and host IDs
+were excluded from predictors. V2 reused the earlier holdout assignments and
+refitted its selected components on all 29,875 development rows before scoring
+the holdout.
 
-The notebook's final CatBoost/LightGBM blend achieved **MAE 102.93067**,
-**RMSE 400.27770**, and **R² 0.57826** on 7,421 labeled holdout listings.
-It improved MAE by 1.51% over the earlier ensemble, with substantial remaining
-underprediction of expensive listings. V2 reused an already examined holdout;
-these are recorded notebook results, not independent external-test scores or
-newly measured results from the modular package.
+The development price distribution was strongly skewed:
 
-See [results and findings](data/README.md) for feature engineering, model
-comparisons, blend weights, price-band errors, and evaluation limitations.
-The [source notebook](airbnb.ipynb) is included for reference.
+| Statistic | Price |
+| --- | ---: |
+| Minimum | 5 |
+| Median | 156 |
+| Mean | 288.272301 |
+| 90th percentile | 485 |
+| 95th percentile | 845 |
+| 99th percentile | 2,500 |
+| Maximum | 56,425 |
 
-## Run the Python files
+The large gap between median and mean, together with the high maximum, explains
+why the experiments compared raw-price and log-price targets and examined
+errors across price bands.
 
-This project follows the `freight-rate-ml-assessment` layout: runnable `.py` files
-in `scripts/`, reusable modules in `src/airbnb/`, CSV inputs in `data/`, and
-models/reports in `outputs/`. Run the following commands from this project folder.
+## Preprocessing and feature engineering
 
-Python 3.11 or newer is required. Install dependencies, then put your original
-training CSV at `data/listings.csv` and prediction rows at `data/new_rows.csv`.
+The 12 core predictors were:
 
-```bash
-python -m venv .venv
-# Windows PowerShell:
-.venv\Scripts\Activate.ps1
-# Linux/macOS instead: source .venv/bin/activate
-python -m pip install -r requirements.txt
-
-python scripts/run_eda.py
-python scripts/run_train.py
-python scripts/run_predict.py
-python scripts/build_report.py
-```
-
-The scripts import this folder's `src/` directly. An editable package install and
-notebook execution are not required. The source CSVs were not supplied, so real
-data must be added before running these default commands.
-
-| File | What it does |
+| Type | Features |
 | --- | --- |
-| `scripts/run_eda.py` | Saves data summaries, missing values, correlations, target associations, and figures. |
-| `scripts/run_train.py` | Performs cross-validation, selects the model, evaluates holdout, and exports it. |
-| `scripts/run_predict.py` | Loads the fitted export and predicts directly from raw CSV rows. |
-| `scripts/build_report.py` | Builds `REPORT.md` and `REPORT.html` from a completed training run. |
-| `scripts/make_demo_data.py` | Generates synthetic rows for checking script execution. |
+| Numeric | `latitude`, `longitude`, `accommodates`, `bathrooms`, `bedrooms`, `beds`, `minimum_nights`, `availability_365`, `number_of_reviews` |
+| Categorical | `neighbourhood_cleansed`, `property_type`, `room_type` |
 
-## Folder structure
+Numeric parsing converted invalid or infinite values to missing values, and
+invalid geographic coordinates were treated as missing. Categorical values
+were trimmed and missing values became `Unknown`. Preprocessing was fitted
+within each training fold.
 
-```text
-airbnb/
-├── scripts/
-│   ├── run_eda.py
-│   ├── run_train.py
-│   ├── run_predict.py
-│   ├── build_report.py
-│   └── make_demo_data.py
-├── src/airbnb/
-│   ├── config.py       # paths, settings, default/full model profiles
-│   ├── data.py         # CSV loading, validation, target parsing
-│   ├── schema.py       # required raw input columns
-│   ├── features.py     # feature engineering and preprocessing
-│   ├── models.py       # model families, pipelines, search spaces
-│   ├── validation.py   # splits, metrics, blend selection
-│   ├── pipeline.py     # training, evaluation, model export
-│   ├── predict.py      # saved-model inference
-│   ├── artifacts.py    # persistence and model metadata
-│   ├── eda.py          # analysis tables and plots
-│   ├── report.py       # readable reports from saved results
-│   ├── demo.py         # synthetic example generator
-│   └── __init__.py
-├── data/
-├── outputs/
-├── examples/predict.csv
-├── tests/
-├── .github/workflows/ci.yml
-├── .gitignore
-├── requirements.txt
-├── pyproject.toml
-└── README.md
-```
+### Original experiment
 
-## Training settings
+The first experiment tested these additions to the core predictors:
 
-Edit `src/airbnb/config.py` to change defaults or pass command-line overrides.
-The `TrainConfig` class contains the default settings; `FULL_PROFILE` contains
-the broader notebook-derived model comparison. `AIRBNB_DATA_DIR` and
-`AIRBNB_OUTPUT_DIR` environment variables can change the default folders.
-
-Default: median baseline, ridge, and random forest. Full: also LightGBM, XGBoost, and CatBoost, with raw/log targets, base/rich features, parameter search, and optional blending.
-
-```bash
-python scripts/run_train.py --data data/listings.csv --output outputs/run
-python scripts/run_train.py --profile full --data data/listings.csv --output outputs/full
-python scripts/run_train.py --help
-```
-
-Available overrides include `--models`, `--feature-sets`, `--n-estimators`,
-`--cv-folds`, `--search-iterations`, `--seed`, and `--n-jobs`. The full profile can
-be expensive. Use a new output directory for each training/EDA run; existing run
-files are preserved. Defaults resolve relative to this project directory; paths
-explicitly passed on the command line resolve relative to your working directory.
-
-## Model export and prediction
-
-Training writes the evaluated fitted model to `outputs/run/model.joblib`.
-It includes the feature transformer, learned preprocessing, estimator(s), and
-blend weights and inverse target handling.
-No separate manual imputation or encoding is needed for prediction.
-
-```bash
-python scripts/run_predict.py --model outputs/run/model.joblib --data data/new_rows.csv --output outputs/predictions.csv
-python scripts/build_report.py --run outputs/run
-```
-
-The training output directory contains:
-
-- `model.joblib`: complete fitted workflow.
-- `metadata.json`: raw input schema, model choice, configuration, dependency versions, and data/source/model hashes.
-- `requirements.lock.txt`: recorded runtime/model package versions.
-- `config.json`: settings captured from this particular run.
-- `cv_results.csv`, `cv_folds.csv`, and optional `search_*.csv`: development model comparisons.
-- `split_assignments.csv`: original row indices, IDs, and evaluation partitions.
-- `holdout_predictions.csv`, `metrics.json`: final evaluation results.
-- `blend_validation.csv`: validation candidate scores when blending is enabled.
-
-`build_report.py` adds `REPORT.md` and `REPORT.html` without retraining the model.
-Only load model files you trust, using the same source and dependency versions as
-the export environment. See the [scikit-learn persistence documentation](https://scikit-learn.org/stable/model_persistence.html).
-
-## Input data
-
-Training target: **`price`**. Prediction CSVs do not need the target.
-Columns may appear in any order; extra columns are ignored unless explicitly
-allowlisted. Column names are case sensitive, with surrounding CSV header spaces
-trimmed. A required column may contain missing values, but must be present.
-
-| Column | Expected value |
+| Feature group | Transformation |
 | --- | --- |
-| `latitude` | numeric; missing allowed |
-| `longitude` | numeric; missing allowed |
-| `accommodates` | numeric; missing allowed |
-| `bathrooms` | numeric; missing allowed |
-| `bedrooms` | numeric; missing allowed |
-| `beds` | numeric; missing allowed |
-| `minimum_nights` | numeric; missing allowed |
-| `availability_365` | numeric; missing allowed |
-| `number_of_reviews` | numeric; missing allowed |
-| `neighbourhood_cleansed` | category; missing allowed |
-| `property_type` | category; missing allowed |
-| `room_type` | category; missing allowed |
+| Capacity ratios | Beds, bedrooms, and bathrooms divided by accommodates |
+| Combined capacity | Beds + bedrooms + bathrooms |
+| Review intensity | Number of reviews / (availability over 365 days + 1) |
+| Category combinations | Neighbourhood × room type; property type × guest capacity |
+| Geographic clusters | Up to 20 KMeans clusters learned from training coordinates |
+| Missingness | Per-feature missing-value flags and a total missing count |
 
-`host_id` is required for default host-grouped training. `id` is optional but preserved as a string. Use `--random-split` only when a row-based evaluation is appropriate; `--no-blend` uses the CV winner directly.
+Numeric imputation used training-fold medians. Categories were one-hot encoded.
+Undefined ratios became missing. Raw-price and `log1p(price)` targets were
+compared, and log-target predictions were converted back to price units.
 
-Training requires at least 100 valid listings,
-plus enough rows/groups for the requested splits and CV folds. Exact duplicate
-rows are removed before splitting. CSV IDs are loaded as strings to preserve
-large numeric identifiers.
+### V2 features retained by the final blend
 
-## Features
+The V2 rich feature set included per-guest capacity ratios, numeric missing
+flags, neighbourhood/room and property/room combinations, and a geographic
+cell formed by rounding latitude and longitude to two decimal places.
 
-The base inputs are the notebook's 12 predictors. The `rich` feature set adds
-per-guest capacity ratios, neighbourhood/room and property/room combinations,
-rounded geographic cells, and numeric missing indicators. If present at training,
-the explicit allowlist also uses `host_response_rate`, `host_listings_count`,
-`host_response_time`, `host_is_superhost`, `instant_bookable`,
-`neighbourhood_group_cleansed`, `amenities`, and `bathrooms_text`.
-Amenity flags cover pool, hot tub, parking, air conditioning, kitchen, washer,
-Wi-Fi, gym, fireplace, and waterfront references. Optional columns used by the
-winning components become required inference columns, recorded in `metadata.json`.
+Five optional inputs were actually available and used by the rich candidates:
+`host_response_rate`, `host_response_time`, `host_is_superhost`,
+`instant_bookable`, and `neighbourhood_group_cleansed`.
 
-LightGBM learns category levels on each training fold; unseen categories become
-missing. CatBoost receives native categories. Ridge, random forest, and XGBoost
-use fitted one-hot encoding and numeric imputation. Ridge also scales inputs.
+The code also supported `host_listings_count`, amenity flags, and a shared-bathroom
+indicator, but their source columns were absent in the recorded run. Those
+features therefore cannot be credited with any observed improvement.
 
-## Evaluation
+V2 LightGBM and CatBoost used native categorical handling. LightGBM category
+levels were learned from training data, with unseen levels treated as missing.
+Numeric missing values were retained for these native boosting models. The
+final blend combined two rich-feature components and one core-feature component;
+it did not use the earlier KMeans feature recipe.
 
-1. Deduplicate exact records; reject unresolved repeated listing IDs. Parse numeric or currency-formatted prices such as `$1,250.00`; exclude missing, nonfinite, and nonpositive targets.
-2. Reserve 20% of hosts for holdout. Reserve 20% of remaining hosts for blend validation (about 16% overall); use the rest for model-selection CV. These are host fractions, so row fractions can differ.
-3. Compare base/rich inputs and raw/log targets with fold-fitted preprocessing. Rank candidates by development CV MAE, or RMSE if configured.
-4. Optionally shortlist two candidates per family and select nonnegative blend weights on the separate validation partition. Retain a blend only when it improves on the best validation single model by `min_blend_gain` in the chosen metric.
-5. Freeze the recipe, refit its components on train + validation, evaluate the untouched holdout, and export that exact fitted workflow.
+## What the original comparisons showed
 
-No valid expensive listings are trimmed. Predictions reverse any log transform and
-are clipped at zero. Reported MAE/RMSE remain in the CSV's original price units;
-no currency conversion is performed. `host_id` and `id` are never predictors.
-Missing host IDs receive distinct row fallback groups, which cannot prevent
-unknown repeated hosts from crossing splits.
+The following are development CV scores from the first experiment, with lower
+MAE indicating better price predictions.
 
-CV scores are used for selecting candidates and are not unbiased external-test
-estimates. `metrics.json` records the holdout results of this run. No previously
-observed notebook metric is reused as a claimed result for these modules.
+| LightGBM feature/target configuration | CV MAE |
+| --- | ---: |
+| Original features, raw target | 136.3654 |
+| Original features, log target | **106.1724** |
+| Engineered features, log target | 107.2329 |
+| Engineered features + geographic clusters, log target | 107.3047 |
+| Engineered features + clusters + missing flags, log target | 107.1151 |
+| Log target, remove training prices above the 99th percentile | 112.3596 |
+| Log target, remove training prices above the 99.5th percentile | 109.3632 |
 
-## EDA outputs
+**The log target was the clearest improvement:** it reduced original-feature
+LightGBM CV MAE by about **22.14%**. The first engineered-feature variants did
+not improve on original features with the log target. Their differences were
+small compared with fold variability, so this does not establish that those
+features are generally unhelpful.
 
-`run_eda.py` writes CSVs for numeric summaries, missing values, category counts,
-correlation/covariance matrices, and target associations, plus PNGs for target and
-numeric distributions and correlations. Target associations use Spearman correlation.
-These summaries describe the supplied dataset; EDA results are not used to select
-the model automatically.
+Training-only price trimming made CV MAE worse. The retained models therefore
+kept the complete valid price range, including expensive listings.
 
-## Try the scripts without the original dataset
+| Original model comparison | CV MAE |
+| --- | ---: |
+| Equal-weight voting ensemble | **105.4829** |
+| LightGBM, original features + log target | 106.1724 |
+| Tuned LightGBM | 106.2581 |
+| Tuned CatBoost | 106.4071 |
+| XGBoost + log target | 107.1161 |
+| CatBoost + log target | 108.0412 |
+| Tuned XGBoost | 108.1474 |
+| Random forest + log target | 109.1731 |
+| Stacking | 118.9273 |
+| Ridge + raw target | 179.5573 |
+| Linear regression + raw target | 179.7455 |
+| Median baseline | 192.3543 |
 
-```bash
-python scripts/make_demo_data.py --output data/demo.csv --rows 400
-python scripts/run_eda.py --data data/demo.csv --output outputs/demo_eda
-python scripts/run_train.py --data data/demo.csv --output outputs/demo --n-estimators 20 --cv-folds 2
-python scripts/run_predict.py --model outputs/demo/model.joblib --data examples/predict.csv --output outputs/demo/predictions.csv
-python scripts/build_report.py --run outputs/demo
-```
+The first selected model averaged LightGBM, XGBoost, tuned CatBoost, and random
+forest predictions equally. All four used log targets and retained all
+development rows. CatBoost tuning improved its CV MAE; LightGBM and XGBoost
+tuning did not beat their initial log-target configurations in the tested search.
+Stacking performed worse than simple averaging.
 
-These inputs are **synthetic**. They check execution, export, and reload; their
-scores do not establish real model performance.
+Log-target linear regression and ridge were unstable after converting predictions
+back to price units: their CV MAEs were **3,736.1750** and **3,590.6145**,
+respectively. The favorable log-target result for tree models did not extend
+to those linear configurations.
 
-## Tests and GitHub
+## V2 model selection and final blend
 
-```bash
-python -m pip install pytest ruff
-python -m pytest
-ruff check src scripts tests
-```
+V2 compared eight LightGBM and eight CatBoost configurations on the smaller
+24,306-row training subset, testing core/rich features and log-L2/raw-MAE
+objectives. Its CV scores should not be directly ranked against the first
+experiment's scores because the training subsets and folds differed.
 
-Tests cover direct script execution, fresh-process export/reload, missing/unseen
-inputs, split isolation, invalid data, optional model families, and reports.
-Each folder can be uploaded as its own same-named GitHub repository:
+| V2 configuration | CV MAE |
+| --- | ---: |
+| `cat_02_log_L2_rich` | **111.1483** |
+| `cat_04_log_L2_base` | 112.3813 |
+| `lgb_02_log_L2_rich` | 112.3901 |
+| `cat_00_log_L2_base` | 112.6772 |
+| `lgb_00_log_L2_base` | 112.9978 |
+| `cat_03_raw_MAE_rich` | 114.3873 |
+| `lgb_03_raw_MAE_rich` | 114.6160 |
 
-```bash
-git init
-git add .
-git commit -m "Add airbnb Python ML project"
-git branch -M main
-git remote add origin https://github.com/YOUR_USERNAME/airbnb.git
-git push -u origin main
-```
+In the matched initial configurations, rich features improved log-target CV
+MAE for CatBoost from 112.6772 to 111.1483 and for LightGBM from 112.9978 to
+112.3901. These changes were modest and did not isolate the contribution of
+each added feature. Direct raw-price MAE objectives did not beat the selected
+log-target configurations in this search.
 
-Local CSVs, generated outputs, environments, and caches are ignored by Git. No
-license was inferred from the supplied notebook. If you also want an installable
-wheel, `pyproject.toml` remains available (`pip install -e .` or `python -m build`).
+The two leading candidates from each family and the earlier voting recipe were
+then compared on the same **5,569 blend-validation rows**:
 
-## Source and limitations
+| Candidate | Validation MAE | Validation RMSE |
+| --- | ---: | ---: |
+| Rich LightGBM, log target | 95.6894 | 405.8345 |
+| Core LightGBM, log target | 99.0837 | 435.0466 |
+| Rich CatBoost, log target | **91.5494** | **323.2076** |
+| Core CatBoost, log target | 92.5820 | 344.2026 |
+| Earlier equal-weight voting recipe | 95.7045 | 398.6005 |
+| Selected V2 blend | **91.1381** | 333.5209 |
 
-Listing examples alone do not establish dataset coverage, date, currency, or redistribution rights. The source CSV and verified data source URL were not included. The original notebook had already explored holdout results; rerunning the same data does not create an independent external test. This package does not reproduce the first notebook cell's geographic KMeans/stacking experiment or the v2 comparison against previously exported Colab models; those research recipes are preserved in the included source notebook.
+The blend reduced validation MAE by **0.4113** versus the best single model,
+exceeding the configured minimum gain of 0.25. It had higher validation RMSE
+than that single CatBoost model, illustrating the tradeoff from selecting by
+MAE. The frozen nonnegative weights were:
 
-Converted from `airbnb.ipynb`. This repository includes a copy of the source
-notebook alongside the modular Python package and supporting files. Notebook-only installation/display cells and obsolete duplicate
-experiments are not part of the runnable workflow. No previous notebook score is
-presented as a result of this conversion.
+| Component | Feature set | Weight |
+| --- | --- | ---: |
+| `cat_02_log_L2_rich` | Core + rich features | 56.09756% |
+| `cat_04_log_L2_base` | Core features | 34.14634% |
+| `lgb_02_log_L2_rich` | Core + rich features | 9.75610% |
 
-Original notebook SHA-256: `eee4c792bf3a143067cccd247b568481613fe8f5b59b8e12f47a3795cfe64668`.
+All three components learned `log1p(price)`. Their predictions were transformed
+back with `expm1`, clipped at zero, and then averaged using these weights in
+original price units. CatBoost supplied about **90.24%** of the final blend.
+The earlier voting recipe and core LightGBM received zero final weight.
+
+## Final holdout results
+
+All rows with valid prices were retained in the **same 7,421-row holdout**.
+
+| Model | MAE | RMSE | R² |
+| --- | ---: | ---: | ---: |
+| Development-median baseline | 199.9113 | 631.5855 | -0.0500 |
+| Earlier equal-weight ensemble, refitted | 104.50483 | 401.65820 | 0.57534 |
+| **V2 validation-selected blend** | **102.93067** | **400.27770** | **0.57826** |
+
+V2 reduced MAE by **1.57416 price units (1.51%)** and RMSE by **1.38050**
+versus the earlier ensemble. Its MAE was about **48.51% below the median
+baseline**. An MAE of 102.93067 means an average absolute prediction error of
+about 102.93 price units. The much larger RMSE indicates that some listings
+had very large errors.
+
+## Error patterns in the final V2 model
+
+Residuals below are actual price minus predicted price: positive values indicate
+underprediction, and negative values indicate overprediction.
+
+| Actual price band | Rows | MAE | Mean residual |
+| --- | ---: | ---: | ---: |
+| Above 0, up to 100 | 2,135 | 22.059 | -17.211 |
+| Above 100, up to 200 | 2,660 | 34.690 | -13.729 |
+| Above 200, up to 500 | 1,828 | 86.329 | 8.405 |
+| Above 500, up to 1,000 | 484 | 266.469 | 113.781 |
+| Above 1,000, up to 2,500 | 236 | 600.773 | 328.676 |
+| Above 2,500 | 78 | **2,511.716** | **2,344.809** |
+
+The model tended to overpredict cheaper listings and underpredict expensive
+ones. The 78 listings above 2,500 represented only **1.05% of the holdout** but
+had exceptionally large errors. The main remaining weakness was the expensive
+tail, despite retaining these listings during training and evaluation.
+
+## Feature importance and earlier segment findings
+
+The notebook's permutation-importance and room/neighbourhood analyses apply to
+the **earlier equal-weight ensemble**, not the V2 blend. Permutation importance
+used a sample of up to 2,000 holdout rows and three repeats; the values are the
+increase in MAE when a raw input was shuffled.
+
+| Raw input | MAE increase after shuffling |
+| --- | ---: |
+| Longitude | 32.5175 |
+| Bathrooms | 32.2963 |
+| Bedrooms | 24.5324 |
+| Accommodates | 15.6031 |
+| Latitude | 15.5614 |
+| Room type | 7.5105 |
+| Property type | 7.4874 |
+| Neighbourhood | 7.2059 |
+
+Location and capacity-related inputs had the largest measured importance in
+that earlier model. These are predictive associations, not causal effects.
+Earlier room-type MAE was 298.758 for hotel rooms, 123.709 for entire homes,
+39.335 for private rooms, and 16.534 for shared rooms. Hotel and shared-room
+groups were small, with 34 and 54 rows respectively. Expensive neighbourhoods
+such as Bel-Air and Malibu also had large errors. No corresponding V2 room-type
+or neighbourhood table was recorded, so these numbers are not attributed to V2.
+
+## What worked, what did not, and evaluation limits
+
+- **Log-price targets helped tree models substantially** compared with the
+  raw-target baseline in the first experiment.
+- **The V2 rich features and native categorical boosters helped modestly** in
+  the recorded comparisons. CatBoost was the largest contributor to the final blend.
+- **Validation-selected blending improved MAE slightly**, with a corresponding
+  small improvement on the reused holdout.
+- **More complexity did not consistently help:** the first geographic/engineered
+  variants, stacking, and some hyperparameter searches failed to improve CV MAE.
+- **Removing expensive training listings hurt performance.** The selected
+  models retained the full valid price range.
+- **Log-target linear models were unstable**, and minimizing validation MAE
+  did not also minimize validation RMSE.
+- **High-price underprediction remained substantial.** Average scores hide
+  much weaker performance for the most expensive listings.
+
+The holdout had already been examined before V2 was developed. These results
+support a comparison on that same dataset and split, not an independent
+external-test claim. The notebook did not record prediction or evaluation of a
+separate external test CSV. The target is a listing's advertised price; these
+results do not measure future bookings or earned revenue.
